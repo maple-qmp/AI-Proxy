@@ -1,5 +1,6 @@
 """Rewrite only final CodeBuddy wire payloads and record safe diagnostics."""
 
+import contextvars
 import json
 import logging
 import time
@@ -13,6 +14,12 @@ from .prompt_compat import prepare_messages
 log = logging.getLogger("ai_proxy.codebuddy")
 _SEARCH_TOOLS = {"tool_search_tool_bm25", "tool_search_tool_regex",
                  "tool_search_tool_bm25_20251119", "tool_search_tool_regex_20251119"}
+
+# Per-request sink for correlation ids. Set by the gateway for the duration of a
+# request so the request log can pick up the upstream's id without changing the
+# transport's constructor (which tests patch by arity).
+diagnostics_sink: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "ai_proxy_gateway_diagnostics", default=None)
 
 
 def _eager_deferred_tools(body: dict[str, Any]) -> bool:
@@ -122,6 +129,11 @@ class GatewayTransport(httpx.AsyncBaseTransport):
         self.debug = debug
         self.subscription = subscription
 
+    def _diagnose(self, key: str, value: Any) -> None:
+        sink = diagnostics_sink.get()
+        if sink is not None:
+            sink[key] = value
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         rewrite_categories: list[str] = []
         path = request.url.path
@@ -180,26 +192,42 @@ class GatewayTransport(httpx.AsyncBaseTransport):
                     response = httpx.Response(200, headers={"content-type": "application/json"}, json=collected, request=request)
                 except (ValueError, KeyError, TypeError) as exc:
                     raise httpx.ProtocolError("Invalid ChatGPT Responses stream") from exc
-        if self.debug and self.codebuddy:
-            entry: dict[str, Any] = {"event": "response", "id": request_id,
-                "status": response.status_code, "duration_ms": int((time.monotonic() - started) * 1000)}
-            if response.status_code >= 400:
-                try:
-                    raw = await response.aread()
-                    if len(raw) <= 32768:
-                        error = json.loads(raw)
-                        if isinstance(error, dict):
-                            if isinstance(error.get("code"), int):
+        if response.status_code >= 400 and self.codebuddy:
+            # The request log wants the upstream's correlation id and error code.
+            # Parse errors only, only small bodies, and never keep the body text:
+            # the debug log (below) has the same guarantee.
+            entry: dict[str, Any] | None = (
+                {"event": "response", "id": request_id, "status": response.status_code,
+                 "duration_ms": int((time.monotonic() - started) * 1000)}
+                if self.debug else None
+            )
+            try:
+                raw = await response.aread()
+                if len(raw) <= 32768:
+                    error = json.loads(raw)
+                    if isinstance(error, dict):
+                        if isinstance(error.get("code"), int):
+                            self._diagnose("upstream_code", error["code"])
+                            if entry is not None:
                                 entry["upstream_code"] = error["code"]
-                            request_id_value = error.get("requestId")
-                            if isinstance(request_id_value, str) and len(request_id_value) <= 128 and request_id_value.replace("-", "").isalnum():
+                        request_id_value = error.get("requestId")
+                        if isinstance(request_id_value, str) and len(request_id_value) <= 128 and request_id_value.replace("-", "").isalnum():
+                            self._diagnose("upstream_request_id", request_id_value)
+                            if entry is not None:
                                 entry["upstream_request_id"] = request_id_value
-                            if error.get("code") == 11128:
+                        if error.get("code") == 11128:
+                            self._diagnose("category", "upstream_rejected_11128")
+                            if entry is not None:
                                 entry["category"] = "upstream_rejected_11128"
-                    response = httpx.Response(response.status_code, headers=response.headers, content=raw, request=request)
-                except (ValueError, httpx.HTTPError):
-                    pass
-            log.info(json.dumps(entry, separators=(",", ":")))
+                response = httpx.Response(response.status_code, headers=response.headers, content=raw, request=request)
+            except (ValueError, httpx.HTTPError):
+                pass
+            if entry is not None:
+                log.info(json.dumps(entry, separators=(",", ":")))
+        elif self.debug and self.codebuddy:
+            log.info(json.dumps({"event": "response", "id": request_id,
+                "status": response.status_code, "duration_ms": int((time.monotonic() - started) * 1000)},
+                separators=(",", ":")))
         return response
 
     @staticmethod

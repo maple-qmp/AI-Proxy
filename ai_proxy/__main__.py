@@ -18,7 +18,9 @@ def load_service_env() -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         if key not in {"HOST", "PORT", "GATEWAY_API_KEY", "GATEWAY_AUTH_FILE", "CODEBUDDY_AUTH_FILE",
-                       "CODEBUDDY_PROMPT_COMPAT", "CODEBUDDY_DEBUG", "SAFEGUARDS_CLASSIFIER_MODEL"}:
+                       "CODEBUDDY_PROMPT_COMPAT", "CODEBUDDY_DEBUG", "SAFEGUARDS_CLASSIFIER_MODEL",
+                       "DASHBOARD_ENABLED", "LOG_ENABLED", "LOG_DB_PATH", "LOG_MAX_ROWS",
+                       "LOG_BODY_LIMIT_BYTES", "LOG_QUEUE_SIZE"}:
             continue
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):

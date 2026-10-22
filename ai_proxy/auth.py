@@ -170,6 +170,26 @@ class CodeBuddyAuth:
                 pass
         raise UpstreamUnavailable("CodeBuddy is not authorized; sign in to the desktop app")
 
+    def selected_file(self) -> Path | None:
+        """The credential the gateway would use right now, or None.
+
+        Exposed for the status dashboard so it applies exactly the same
+        newest-valid-file rule as ``authorize``.
+        """
+        try:
+            return self._select()
+        except UpstreamUnavailable:
+            return None
+
+    def candidates(self) -> list[Path]:
+        """Every discoverable credential file, newest first."""
+        if self.file:
+            return [self.file] if self.file.exists() else []
+        try:
+            return sorted(self.directory.glob("*.info"), key=lambda p: (-p.stat().st_mtime_ns, str(p)))
+        except OSError:
+            return []
+
     @staticmethod
     def _validated(path: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         data = _read_json(path)

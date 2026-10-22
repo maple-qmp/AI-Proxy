@@ -15,9 +15,32 @@ uv sync --extra test
 
 登录命令会打开浏览器，使用 `127.0.0.1:1455/auth/callback` 接收授权结果。浏览器无法访问回调时，可在终端粘贴完整的回调 URL。ChatGPT 凭据和独立设备 ID 保存在 `~/.config/ai-proxy/`，权限为 `0600`；凭据过期时服务自动刷新并原子写回。CodeBuddy 仍需先在桌面端登录。服务默认只监听 `127.0.0.1:8787`。无需从其他项目复制凭据。
 
-启动及登录时读取 `~/.config/ai-proxy/service.env`，已有进程环境变量优先。支持 `HOST`、`PORT`、`GATEWAY_API_KEY`、`GATEWAY_AUTH_FILE`、`CODEBUDDY_AUTH_FILE`、`CODEBUDDY_PROMPT_COMPAT`、`CODEBUDDY_DEBUG`、`SAFEGUARDS_CLASSIFIER_MODEL`。可通过 `SERVICE_ENV_FILE` 指向另一个配置文件。`GATEWAY_AUTH_FILE` 可覆盖默认的 ChatGPT 凭据路径，登录命令和服务须使用相同配置。非回环地址必须设置 `GATEWAY_API_KEY`。`/healthz` 无需密钥；其他接口要求 Bearer 密钥，Messages 也接受 `x-api-key`。
+启动及登录时读取 `~/.config/ai-proxy/service.env`，已有进程环境变量优先。支持 `HOST`、`PORT`、`GATEWAY_API_KEY`、`GATEWAY_AUTH_FILE`、`CODEBUDDY_AUTH_FILE`、`CODEBUDDY_PROMPT_COMPAT`、`CODEBUDDY_DEBUG`、`SAFEGUARDS_CLASSIFIER_MODEL` 以及下文控制台相关变量。可通过 `SERVICE_ENV_FILE` 指向另一个配置文件。`GATEWAY_AUTH_FILE` 可覆盖默认的 ChatGPT 凭据路径，登录命令和服务须使用相同配置。非回环地址必须设置 `GATEWAY_API_KEY`。`/healthz` 与 `/dashboard` 页面无需密钥；其他接口要求 Bearer 密钥，Messages 也接受 `x-api-key`。
 
 模型目录按登录身份缓存 5 分钟。同名模型优先使用 ChatGPT；显式 `codebuddy/<模型 ID>` 使用 CodeBuddy。
+
+## 本地控制台
+
+服务启动后访问 <http://127.0.0.1:8787/dashboard>，可以查看：
+
+- **LLM 日志**：每次网关请求的记录，含完整请求与响应正文，可按时间范围、状态、Provider、端点、客户端、模型筛选，支持分页与详情查看。
+- **可用模型**：按当前账号实时发现的两个上游模型目录，可强制刷新。
+- **登录状态**：ChatGPT 与 CodeBuddy / WorkBuddy 的凭据状态、到期倒计时与凭据文件位置，并可在线刷新 token。
+
+日志保存在 SQLite（默认 `~/.config/ai-proxy/logs.db`，文件权限 `0600`，目录 `0700`），WAL 模式，默认保留最近 5000 条。写日志不会阻塞请求：队列满时丢弃并在概览里计数。
+
+**日志正文包含完整的 prompt 与响应内容**，仅保存在本机，页面不会外发。如果网关设置了 `GATEWAY_API_KEY`，页面本身可以直接打开，但 `/dashboard/api/*` 需要密钥；页面会把密钥保存在当前标签页的 `sessionStorage`，不写入磁盘。
+
+控制台相关配置（可写入 `service.env`）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DASHBOARD_ENABLED` | `1` | 设为 `0` 时不注册控制台页面与接口 |
+| `LOG_ENABLED` | `1` | 设为 `0` 时不记录请求日志 |
+| `LOG_DB_PATH` | `~/.config/ai-proxy/logs.db` | SQLite 路径 |
+| `LOG_MAX_ROWS` | `5000` | 保留条数（100–1000000） |
+| `LOG_BODY_LIMIT_BYTES` | `262144` | 单条请求/响应正文上限，超出标记截断 |
+| `LOG_QUEUE_SIZE` | `256` | 日志写队列长度（8–10000） |
 
 ## Claude Code
 
