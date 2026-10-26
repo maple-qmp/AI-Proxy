@@ -21,11 +21,34 @@ SECURITY_TERMS = (
 CLIENT_TERMS = (
     "Claude Code", "Claude Opus", "Claude Sonnet", "Claude Haiku", "Claude Fable",
     "Anthropic", "Co-Authored-By", "noreply@anthropic.com", "Claude", "OpenAI",
-    "Gemini", "Kimi", "Qwen", "Cursor", "OpenCode", "agent-identity", "OhMyOpenCode",
+    "Gemini", "Kimi", "Qwen", "Cursor", "OpenCode", "agent-identity", "OhMyOpenCode", "DeepSeek",
 )
 _KINDS = {**{x.lower(): "security_term" for x in SECURITY_TERMS},
           **{x.lower(): "client_brand_term" for x in CLIENT_TERMS}}
 _PATTERN = re.compile(r"\b(?:" + "|".join(re.escape(x) for x in sorted(SECURITY_TERMS + CLIENT_TERMS, key=len, reverse=True)) + r")\b", re.I | re.ASCII)
+_HARNESS_OPENING = "You are an AI agent powered by DeepSeek Harness."
+_GUI_OPENING = "You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names."
+_GUI_DOUBLE_QUOTES = '"this page", "this GUI", or "this app"'
+_GUI_SINGLE_QUOTES = "'this page', 'this GUI', or 'this app'"
+
+
+def _remove_harness_opening(value: str) -> str:
+    for newline in ("\r\n", "\n"):
+        prefix = _HARNESS_OPENING + newline
+        if value.startswith(prefix) and len(value) > len(prefix):
+            return value[len(prefix):].removeprefix(newline)
+    return value
+
+
+def _rewrite_gui_quotes(value: str) -> str:
+    if _GUI_DOUBLE_QUOTES not in value:
+        return value
+    start = 0
+    while (index := value.find(_GUI_OPENING, start)) >= 0:
+        if index == 0 or value[index - 1] == "\n":
+            return value.replace(_GUI_DOUBLE_QUOTES, _GUI_SINGLE_QUOTES)
+        start = index + len(_GUI_OPENING)
+    return value
 
 
 def _rewrite(value: str, matches: list[str]) -> str:
@@ -39,6 +62,17 @@ def _rewrite(value: str, matches: list[str]) -> str:
         value = tail if sep else ""
         if "billing_header" not in matches:
             matches.append("billing_header")
+
+    without_opening = _remove_harness_opening(value)
+    if without_opening != value:
+        value = without_opening
+        if "deepseek_harness_opening" not in matches:
+            matches.append("deepseek_harness_opening")
+    with_gui_quotes = _rewrite_gui_quotes(value)
+    if with_gui_quotes != value:
+        value = with_gui_quotes
+        if "deepseek_harness_gui_quotes" not in matches:
+            matches.append("deepseek_harness_gui_quotes")
 
     def replace(match: re.Match[str]) -> str:
         if match.start() > 0 and match.string[match.start() - 1] == "\u200b":

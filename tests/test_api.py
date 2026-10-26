@@ -2,12 +2,26 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
 import ai_proxy.app as gateway
 from ai_proxy.auth import Session
 from ai_proxy.catalog import Model
 from ai_proxy.transport import GatewayTransport
+
+
+HARNESS_SYSTEM = (
+    "You are an AI agent powered by DeepSeek Harness.\n\n"
+    "You are a coding agent powered by the deepseek-v4.1-flash model.\n\n"
+    "You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names. "
+    'When the user refers to "this page", "this GUI", or "this app", they mean this GUI.'
+)
+HARNESS_WIRE = (
+    "You are a coding agent powered by the d\u200beepseek-v4.1-flash model.\n\n"
+    "You are interacting with the user through the D\u200beepSeek Harness Web GUI whose URL the runtime context names. "
+    "When the user refers to 'this page', 'this GUI', or 'this app', they mean this GUI."
+)
 
 
 def _completion(message=None):
@@ -66,6 +80,57 @@ def test_three_endpoints_and_codebuddy_system_rewrite(monkeypatch):
     assert "interactive software engineering assistant" in seen[0][1]["messages"][0]["content"]
     assert seen[0][1]["messages"][1]["content"] == "You are Claude Code, Anthropic's official CLI for Claude."
     assert "interactive software engineering assistant" in seen[2][1]["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("route", ["chat/completions", "responses", "messages"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_deepseek_harness_compatibility_on_final_codebuddy_request(monkeypatch, route, stream):
+    seen = []
+
+    def upstream(request):
+        body = json.loads(request.content)
+        seen.append((request.url.path, body))
+        chunks = [
+            {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "glm",
+             "choices": [{"index": 0, "delta": {"role": "assistant", "content": "OK"}, "finish_reason": None}]},
+            {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "glm",
+             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        ]
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content="".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks) +
+                                      "data: [DONE]\n\n")
+
+    app = _app(monkeypatch, upstream=upstream)
+    if route == "chat/completions":
+        payload = {"model": "glm", "stream": stream, "messages": [
+            {"role": "system", "content": HARNESS_SYSTEM},
+            {"role": "user", "content": HARNESS_SYSTEM}]}
+    elif route == "responses":
+        payload = {"model": "glm", "stream": stream, "instructions": HARNESS_SYSTEM,
+                   "input": [{"role": "user", "content": HARNESS_SYSTEM}]}
+    else:
+        payload = {"model": "glm", "max_tokens": 100, "stream": stream, "system": HARNESS_SYSTEM,
+                   "messages": [{"role": "user", "content": HARNESS_SYSTEM}]}
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/v1/" + route, json=payload)
+            assert response.status_code == 200, response.text
+            if stream:
+                assert "OK" in response.text
+            elif route == "chat/completions":
+                assert response.json()["choices"][0]["message"]["content"] == "OK"
+            elif route == "messages":
+                assert response.json()["content"][0]["text"] == "OK"
+            else:
+                assert response.json()["output"][0]["content"][0]["text"] == "OK"
+
+    asyncio.run(run())
+    assert len(seen) == 1
+    path, body = seen[0]
+    assert path == "/v2/chat/completions"
+    assert body["messages"][0] == {"role": "system", "content": HARNESS_WIRE}
+    assert body["messages"][1]["content"] == HARNESS_SYSTEM
 
 
 def test_messages_tool_roundtrip_and_streaming(monkeypatch):

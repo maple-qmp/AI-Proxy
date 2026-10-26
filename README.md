@@ -63,7 +63,7 @@ ChatGPT 订阅上游只接受流式 Responses 请求，网关可将其收集为�
 
 ## CodeBuddy 提示兼容
 
-只有最终发往 CodeBuddy `chat/completions` 的 system 文本会按旧项目规则处理：精确指纹、开头 billing header、最长词优先且有词边界的安全术语和客户端品牌词。用户消息、助手历史、工具内容以及 ChatGPT 请求不改写。设置 `CODEBUDDY_PROMPT_COMPAT=0` 可关闭。`CODEBUDDY_DEBUG=1` 只记录命中类别、状态、耗时和脱敏后的上游错误分类；`11128` 标为 `upstream_rejected_11128`。
+只有最终发往 CodeBuddy `/v2/chat/completions` 的 system 文本会按兼容规则处理：精确指纹、开头 billing header、最长词优先且有词边界的安全术语和客户端品牌词。DeepSeek Harness 的精确身份首行在后面还有正文时会被移除（包括紧随的一行空行）；其余 `DeepSeek` 词会在首字符后插入零宽字符。若某行以 `You are interacting with the user through the DeepSeek Harness Web GUI whose URL the runtime context names.` 开头，该 system 文本中的 `"this page", "this GUI", or "this app"` 会改为单引号形式。同一行继续的内容也能匹配。用户消息、助手历史、工具内容以及 ChatGPT 请求不改写。规则默认开启，设置 `CODEBUDDY_PROMPT_COMPAT=0` 可关闭。`CODEBUDDY_DEBUG=1` 只记录命中类别、状态、耗时和脱敏后的上游错误分类；`11128` 标为 `upstream_rejected_11128`。
 
 ## 验证
 
